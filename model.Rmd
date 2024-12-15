@@ -1,0 +1,335 @@
+---
+title: "Life Expectancy Predictor"
+author: "Riya Kalra"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+$$
+\text{Life.Exp} = \beta_0 + \beta_1 \cdot \text{Murder} + \beta_2 \cdot \text{HS.Grad} + \beta_3 \cdot \text{Frost} + \beta_4 \cdot \text{Population}
+$$
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(faraway)
+library(ggplot2)
+library(plotly)
+library(corrplot)
+library(knitr)
+```
+
+R dataset state.x77 from library(faraway) contains information on 50 states from 1970s collected by US Census Bureau. The goal is to predict ‘life expectancy’ using a combination of remaining variables.
+
+### a) First we load the dataset and provide descriptive statistics for all variables of interest. 
+```{r}
+data(state)
+state_data <- as.data.frame(state.x77)
+
+# Descriptive statistics
+summary(state_data)
+sapply(state_data, sd)  # Standard deviations
+
+# Convert all variables to numeric using lapply
+state_data <- as.data.frame(lapply(state_data, as.numeric))
+
+# Confirm all variables are numeric
+str(state_data)
+```
+
+Now we can create some plots. We can start with a scatterplot matrix of multiple variables to get a better idea of correlations between them.
+```{r}
+pairs(state_data,
+      main = "Scatterplot Matrix",
+      col = "blue",
+      pch = 19)
+```
+
+We can now make a heatmap that gives us more specific data. From this, we can see that life expectancy may be correlated with the murder, high school graduation, and illiteracy variables. We may also want to consider income or frost.
+```{r}
+# Compute correlation matrix
+cor_matrix <- cor(state_data)
+
+# Visualize correlations
+corrplot(cor_matrix, method = "color", addCoef.col = "black", tl.col = "black",
+         title = "Correlation Heatmap", mar = c(0, 0, 1, 0))
+```
+
+Next we pair some of the more correlated variables to get a better look.
+```{r}
+pairs(state_data[, c("Life.Exp", "Income", "HS.Grad", "Murder")],
+      main = "Focused Scatterplot Matrix",
+      col = "darkblue", pch = 19)
+```
+### b) Examine the plots and decide transformations
+
+The **scatterplot matrix** and **correlation heatmap** reveal key relationships among `Life.Exp`, `Income`, `HS.Grad`, and `Murder`. The scatterplots show that **life expectancy** has a positive relationship with both **income** and **high school graduation rates**, indicating that states with higher income and education levels tend to have longer life expectancy. Conversely, life expectancy exhibits a strong **negative relationship** with **murder rates**, suggesting that higher crime rates are associated with lower life expectancy. The positive relationship between **income** and **HS graduation rates** highlights that states with higher incomes tend to have better education outcomes. Additionally, a negative relationship is observed between **murder rates** and both **income** and **HS graduation rates**, indicating that higher education and income levels may contribute to lower crime rates.
+
+The **correlation heatmap** quantifies these relationships. `Life.Exp` is strongly negatively correlated with `Murder` (-0.78) and positively correlated with `HS.Grad` (0.58) and `Income` (0.34). `HS.Grad` and `Illiteracy` have a strong negative correlation (-0.66), reflecting the inverse relationship between education and illiteracy. Similarly, **murder rates** are positively correlated with `Illiteracy` (0.70) and negatively correlated with `HS.Grad` (-0.49), further underscoring the importance of education in reducing crime. Weak correlations between variables like `Area` and `Population` suggest limited influence on life expectancy or education outcomes. Together, these plots highlight the interconnected roles of income, education, and crime in influencing life expectancy across states.
+
+```{r}
+ggplot(state_data, aes(x = Income, y = HS.Grad)) +
+  geom_point(aes(color = Life.Exp), size = 3, alpha = 0.7) +
+  geom_density_2d(color = "red") +
+  scale_color_viridis_c() +
+  labs(title = "Density Plot: Income vs HS Graduation Rate",
+       x = "Income", y = "HS Graduation Rate", color = "Life Expectancy") +
+  theme_minimal()
+```
+The density plot highlights key patterns among income, HS graduation rates, and life expectancy. High-density regions occur around an income of $5,000–$6,000 and HS graduation rates of 55%–60%. Higher incomes generally correspond to higher graduation rates, while states with incomes below $4,000 and graduation rates below 50% cluster in the bottom-left. Life expectancy, shown by a color gradient, is higher (yellow, ~73 years) in regions with both higher income and graduation rates, while lower life expectancy (purple, ~68 years) is linked to lower income and graduation rates. Sparse data exists in areas of low graduation rates with high income or vice versa, indicating these combinations are uncommon.
+
+### Transformations
+```{r}
+par(mfrow = c(2, 2))
+boxplot(state_data$Income, main = "Income (Original)", ylab = "Income")
+boxplot(log(state_data$Income), main = "Income (Log Transformed)", ylab = "Log(Income)")
+
+boxplot(state_data$Area, main = "Area (Original)", ylab = "Area")
+boxplot(log(state_data$Area), main = "Area (Log Transformed)", ylab = "Log(Area)")
+par(mfrow = c(1, 1))
+
+# Boxplots for Income, HS.Grad, and Murder (before and after log transformation)
+
+# Set up a 2x3 plotting layout
+par(mfrow = c(2, 3))  # 2 rows, 3 columns
+
+# Original Boxplots
+boxplot(state_data$Income, main = "Income (Original)", ylab = "Income", col = "lightblue")
+boxplot(state_data$HS.Grad, main = "HS Grad (Original)", ylab = "HS Graduation Rate (%)", col = "lightgreen")
+boxplot(state_data$Murder, main = "Murder (Original)", ylab = "Murder Rate", col = "lightpink")
+
+# Log-Transformed Boxplots
+boxplot(log(state_data$Income), main = "Income (Log Transformed)", ylab = "Log(Income)", col = "lightblue")
+boxplot(log(state_data$HS.Grad), main = "HS Grad (Log Transformed)", ylab = "Log(HS Grad)", col = "lightgreen")
+boxplot(log(state_data$Murder), main = "Murder (Log Transformed)", ylab = "Log(Murder)", col = "lightpink")
+
+# Reset layout
+par(mfrow = c(1, 1))
+
+```
+#### P-values for predictors
+```{r, echo=FALSE}
+# Fit individual models for each predictor and extract p-values
+p_values <- data.frame(
+  Variable = c("Population", "Income", "Illiteracy", "Murder", "HS.Grad", "Frost", "Area"),
+  P_Value = c(
+    summary(lm(Life.Exp ~ Population, data = state_data))$coefficients[2, 4],
+    summary(lm(Life.Exp ~ Income, data = state_data))$coefficients[2, 4],
+    summary(lm(Life.Exp ~ Illiteracy, data = state_data))$coefficients[2, 4],
+    summary(lm(Life.Exp ~ Murder, data = state_data))$coefficients[2, 4],
+    summary(lm(Life.Exp ~ HS.Grad, data = state_data))$coefficients[2, 4],
+    summary(lm(Life.Exp ~ Frost, data = state_data))$coefficients[2, 4],
+    summary(lm(Life.Exp ~ Area, data = state_data))$coefficients[2, 4]
+  )
+)
+
+
+# Ensure p-values are numeric
+p_values$P_Value <- as.numeric(p_values$P_Value)
+# Sort by p-value 
+p_values <- p_values[order(p_values$P_Value), ]
+
+# Conditional formatting: Convert small p-values to scientific notation
+p_values$P_Value <- ifelse(
+  p_values$P_Value < 0.001, 
+  format(p_values$P_Value, scientific = TRUE),  # Format in scientific notation if small
+  format(round(p_values$P_Value, 4), nsmall = 4)  # Otherwise, round to 4 decimals
+)
+
+
+kable(p_values, col.names = c("Variable", "P-Value"), digits = 4, caption = "P-Values for Individual Predictors", row.names = FALSE)
+
+```
+### c) Automatic Selection
+#### Forward Model
+```{r}
+# Enter the variable with the lowest p-value: Murder
+forward1 <- lm(Life.Exp ~ Murder, data = state_data)
+summary(forward1)
+
+# Step 2: Add the next variable with the lowest p-value
+forward2 <- update(forward1, . ~ . + HS.Grad)
+summary(forward2)
+
+forward3 <- update(forward2, . ~ . + Illiteracy)
+summary(forward3)
+
+forward4 <- update(forward3, . ~ . + Income)
+summary(forward4)
+
+forward5 <- update(forward4, . ~ . + Frost)
+summary(forward5)
+
+#Frost has a p-value of 0.066, which is not statistically significant 
+#Stop if no additional variables significantly improve the model
+```
+
+
+
+### Backward Model
+```{r}
+# Fit the full model with all predictors
+full_model <- lm(Life.Exp ~ Murder + Illiteracy + HS.Grad + Income + Frost + Area + Population, data = state_data)
+summary(full_model)
+
+# Step 1: Remove the predictor with the highest p-value
+step1 <- update(full_model, . ~ . - Population)
+summary(step1)
+
+# Step 2: Remove the next predictor with the highest p-value
+step2 <- update(step1, . ~ . - Area)
+summary(step2)
+
+# Step 3: Remove the next predictor with the highest p-value
+step3 <- update(step2, . ~ . - Frost)
+summary(step3)
+
+# Step 4: Check remaining predictors
+summary(step3)  # Stop if all remaining predictors are significant
+
+# Automate backward elimination using step()
+final_model <- step(full_model, direction = "backward")
+summary(final_model)
+```
+The variable **`Illiteracy`** was not included in the final model because it became statistically insignificant during the backward elimination process. Although `Illiteracy` had a low p-value when considered alone, its significance likely dropped after adding other predictors, such as `HS.Grad` and `Murder`, due to **collinearity**. The strong negative correlation between `Illiteracy` and `HS.Grad` (-0.66) indicates that both variables explain similar variance in **Life.Exp**. As a result, the backward elimination process retained `HS.Grad` as the more impactful predictor, while removing `Illiteracy` to simplify the model without compromising its performance. Additionally, the automated `step()` function optimizes model fit using criteria like **AIC**, which penalizes unnecessary complexity. Including `Illiteracy` may not have significantly improved the model’s goodness-of-fit, leading to its exclusion.
+
+#### Do the procedures generate the same model? Are any variables a close call?  Is there any association between ‘Illiteracy’ and ‘HS graduation rate’? 
+
+Not quite. The forward model includes `Murder + HS.Grad + Illiteracy + Income + Frost`, and the backward includes `Life.Exp ~ Murder + HS.Grad + Frost + Population`. Additionally, `Illiteracy` and `HS.Grad` are collinear and `HS.Grad` is more impactful, so we will choose to keep that one. My chosen subset will not contain both.
+
+### d) Criterion-Based Procedures
+#### CP and R^2
+```{r}
+# Load necessary library
+library(leaps)
+
+# Convert data to a matrix
+state_mat <- as.matrix(state_data[, c("Murder", "Illiteracy", "HS.Grad", "Income", "Frost", "Area", "Population")])
+life_exp <- state_data$Life.Exp
+
+# Best models using Cp
+leaps_cp <- leaps(x = state_mat, y = life_exp, nbest = 2, method = "Cp")
+print(leaps_cp)
+
+# Best models using Adjusted R²
+leaps_adjr2 <- leaps(x = state_mat, y = life_exp, nbest = 2, method = "adjr2")
+print(leaps_adjr2)
+
+# Use regsubsets() for subset selection and plot Cp and Adjusted R²
+library(MASS)
+subset_fit <- regsubsets(Life.Exp ~ Murder + Illiteracy + HS.Grad + Income + Frost + Area + Population, 
+                         data = state_data, nvmax = 7)
+subset_summary <- summary(subset_fit)
+
+# Plot Cp and Adjusted R²
+par(mfrow = c(1, 2))
+plot(1:7, subset_summary$cp, xlab = "No of Predictors", ylab = "Cp", main = "Cp Statistic")
+abline(0, 1, col = "red")
+plot(1:7, subset_summary$adjr2, xlab = "No of Predictors", ylab = "Adjusted R²", main = "Adjusted R²")
+```
+#### AIC and BIC
+```{r}
+# Load necessary library
+library(leaps)
+
+# Fit all subsets using regsubsets
+subset_fit <- regsubsets(Life.Exp ~ Murder + Illiteracy + HS.Grad + Income + Frost + Area + Population, 
+                         data = state_data, nvmax = 7)
+subset_summary <- summary(subset_fit)
+
+# Extract AIC and BIC for each subset size
+n <- nrow(state_data)  # Sample size
+rss <- subset_summary$rss  # Residual sum of squares
+num_params <- 1:7 + 1  # Number of parameters (predictors + intercept)
+
+# Calculate AIC and BIC
+AIC_values <- n * log(rss / n) + 2 * num_params
+BIC_values <- n * log(rss / n) + log(n) * num_params
+
+# Plot AIC and BIC
+par(mfrow = c(1, 2))
+plot(num_params, AIC_values, type = "b", pch = 19, xlab = "Number of Predictors", ylab = "AIC", main = "AIC")
+plot(num_params, BIC_values, type = "b", pch = 19, xlab = "Number of Predictors", ylab = "BIC", main = "BIC")
+par(mfrow = c(1, 1))  # Reset layout
+```
+
+BIC is stricter than AIC.The optimal model includes 4 predictors:`Murder`, `HS.Grad`, `Population`, `Frost`. 
+
+### e) LASSO
+```{r}
+library(glmnet)
+
+# Prepare the data for LASSO
+X <- as.matrix(state_data[, c("Murder", "Illiteracy", "HS.Grad", "Income", "Frost", "Area", "Population")])
+y <- state_data$Life.Exp
+
+# Fit LASSO models for different lambdas
+fit_5 <- glmnet(X, y, lambda = 5)
+fit_1 <- glmnet(X, y, lambda = 1)
+fit_0.1 <- glmnet(X, y, lambda = 0.1)
+
+# Print coefficients for different lambdas
+print(coef(fit_5))
+print(coef(fit_1))
+print(coef(fit_0.1))
+
+# Use cross-validation to choose the best lambda
+set.seed(123)
+cv_lasso <- cv.glmnet(X, y, alpha = 1, lambda = 10^seq(-3, 3, length = 100), nfolds = 5)
+
+# Plot cross-validation results
+plot(cv_lasso)
+lambda_min <- cv_lasso$lambda.min
+print(paste("Best lambda:", lambda_min))
+
+# Refit LASSO with the best lambda
+lasso_best <- glmnet(X, y, alpha = 1, lambda = lambda_min)
+print(coef(lasso_best))
+```
+For LASSO regression, we used cross-validation to determine the best lambda value, which controls the penalty for including less significant predictors. A range of lambda values was tested using the cv.glmnet() function, and the lambda that minimized the cross-validation error was selected. This optimal lambda was identified as the point with the lowest error on the cross-validation plot. Refitting the LASSO model using this lambda resulted in a sparse model, retaining only the most important predictors while shrinking less relevant coefficients to zero. The final set of predictors includes Murder, HS.Grad, and Population, demonstrating their importance in predicting life expectancy.
+
+### f) Subset comparison and Cross-Validation
+
+Check model assumptions.
+```{r}
+#Linearity
+plot(fitted(final_model), residuals(final_model))
+abline(h = 0, col = "red")
+
+#Homoscedasticity
+library(lmtest)
+bptest(final_model)
+
+#Normality
+qqnorm(residuals(final_model))
+qqline(residuals(final_model))
+shapiro.test(residuals(final_model))
+
+#Multicollinearity
+library(car)
+vif(final_model)
+```
+
+10-fold cross validation
+```{r}
+library(boot)
+state_data <- na.omit(state_data)
+
+# Define the final model formula
+final_model_formula <- Life.Exp ~ Murder + HS.Grad + Frost + Population
+
+# Perform 10-fold cross-validation
+cv_results <- cv.glm(state_data, glm(final_model_formula, data = state_data), K = 10)
+
+# Print cross-validated error
+print(cv_results$delta)
+```
+
+## g) Summary
+This analysis identifies the key factors influencing life expectancy across states. The final model includes crime rate (Murder), high school graduation rates (HS.Grad), population (Population), and climate (Frost) as significant predictors. These variables together explain most of the variability in life expectancy. Higher education levels and fewer frost days are positively associated with longer life expectancy, while higher crime rates reduce it. Diagnostic tests confirm that the model meets assumptions of linearity, normality, and constant variance, ensuring its reliability. Additionally, 10-fold cross-validation demonstrates strong predictive accuracy, meaning the model performs well on new data. Overall, improving education, reducing crime, and increasing economic opportunities are critical factors for enhancing life expectancy.
+
+The resulting model is:
+$$
+\text{Life.Exp} = \beta_0 + \beta_1 \cdot \text{Murder} + \beta_2 \cdot \text{HS.Grad} + \beta_3 \cdot \text{Frost} + \beta_4 \cdot \text{Population}
+$$
